@@ -55,8 +55,10 @@ def send_message(bot, message):
 
 def get_api_answer(current_timestamp):
     """Запрос к эндпоинту API-сервиса."""
-    params = {'from_date': current_timestamp}
-    parameters = dict(url=ENDPOINT, headers=HEADERS, params=params)
+    parameters = dict(
+        url=ENDPOINT,
+        headers=HEADERS,
+        params={'from_date': current_timestamp})
     try:
         response = requests.get(**parameters)
     except RequestException as error:
@@ -123,7 +125,7 @@ def main():
             homeworks = check_response(response)
             if homeworks:
                 send_message(bot, parse_status(homeworks[0]))
-            timestamp = response.get('current_date', int(time.time()))
+            timestamp = response.get('current_date', timestamp)
         except Exception as error:
             message = ERROR_MESSAGE.format(error)
             logging.exception(message)
