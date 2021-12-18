@@ -14,9 +14,3 @@ class TokenError(Exception):
     """Ошибка в токенах."""
 
     pass
-
-
-class SendMessageError(Exception):
-    """Ошибка при отправке сообщения."""
-
-    pass

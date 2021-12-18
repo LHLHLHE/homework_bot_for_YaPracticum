@@ -5,12 +5,9 @@ import time
 import requests
 import telegram
 from dotenv import load_dotenv
+from requests.exceptions import RequestException
 
-from exceptions import (
-    ResponseError,
-    SendMessageError,
-    StatusCodeError,
-    TokenError)
+from exceptions import (ResponseError, StatusCodeError, TokenError)
 
 load_dotenv()
 
@@ -31,12 +28,13 @@ VERDICTS = {
 TOKENS = ('PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID')
 
 SEND_MESSAGE_INFO = 'Отправлено сообщение: "{}"'
-API_ANSWER_ERROR = ('Ошибка подключения к API: {}. '
-                    'endpoint: {}, headers: {}, params: {}')
-RESPONSE_ERROR = ('Отказ от обслуживания: {}. '
-                  'status_code: {}, endpoint:{}, headers: {}, params: {}')
+API_ANSWER_ERROR = ('Ошибка подключения к API: {error}. '
+                    'endpoint: {url}, headers: {headers}, params: {params}')
+RESPONSE_ERROR = ('Отказ от обслуживания: {error}, key {key}. '
+                  'endpoint: {url}, headers: {headers}, params: {params}')
 STATUS_CODE_ERROR = ('Ошибка при запросе к API: '
-                     'status_code: {}, endpoint: {}, headers: {}, params: {}')
+                     'status_code: {status_code}, endpoint: {url}, '
+                     'headers: {headers}, params: {params}')
 UNKNOWN_STATUS_ERROR = 'Неизвестный статус: {}'
 CHANGED_STATUS = 'Изменился статус проверки работы "{}". {}'
 RESPONSE_NOT_DICT = 'Ответ API не является словарем'
@@ -44,7 +42,7 @@ HOMEWORKS_NOT_IN_RESPONSE = 'Отсутствует ключ homeworks'
 HOMEWORKS_NOT_LIST = 'Под ключом `homeworks` домашки приходят не в виде списка'
 TOKEN_NOT_FOUND = 'Токен {} не найден!'
 ERROR_MESSAGE = 'Сбой в работе программы: {}'
-HOMEWORK_NAME_NOT_FOUND = 'Не найден ключ `homeworks`!'
+HOMEWORK_NAME_NOT_FOUND = 'Не найден ключ `homework_name`!'
 SEND_MESSAGE_ERROR = 'Ошибка при отправке сообщения: {}'
 TOKEN_ERROR = 'Ошибка в токенах!'
 
@@ -58,36 +56,24 @@ def send_message(bot, message):
 def get_api_answer(current_timestamp):
     """Запрос к эндпоинту API-сервиса."""
     params = {'from_date': current_timestamp}
+    parameters = dict(url=ENDPOINT, headers=HEADERS, params=params)
     try:
-        response = requests.get(ENDPOINT, headers=HEADERS, params=params)
-    except ConnectionError as error:
+        response = requests.get(**parameters)
+    except RequestException as error:
         raise ConnectionError(
-            API_ANSWER_ERROR.format(error, ENDPOINT, HEADERS, params))
-    response_json = response.json()
+            API_ANSWER_ERROR.format(error=error, **parameters))
     status_code = response.status_code
     if status_code != 200:
         raise StatusCodeError(
-            STATUS_CODE_ERROR.format(
-                status_code,
-                ENDPOINT,
-                HEADERS,
-                params))
-    if 'error' in response_json:
-        raise ResponseError(
-            RESPONSE_ERROR.format(
-                response_json['error'],
-                status_code,
-                ENDPOINT,
-                HEADERS,
-                params))
-    if 'code' in response_json:
-        raise ResponseError(
-            RESPONSE_ERROR.format(
-                response_json['code'],
-                status_code,
-                ENDPOINT,
-                HEADERS,
-                params))
+            STATUS_CODE_ERROR.format(status_code=status_code, **parameters))
+    response_json = response.json()
+    for key in ('error', 'code'):
+        if key in response_json:
+            raise ResponseError(
+                RESPONSE_ERROR.format(
+                    error=response_json[key],
+                    key=key,
+                    **parameters))
     return response_json
 
 
@@ -97,7 +83,8 @@ def check_response(response):
         raise TypeError(RESPONSE_NOT_DICT)
     if 'homeworks' not in response:
         raise KeyError(HOMEWORKS_NOT_IN_RESPONSE)
-    if type(response['homeworks']) is not list:
+    homeworks = response['homeworks']
+    if type(homeworks) is not list:
         raise TypeError(HOMEWORKS_NOT_LIST)
     return response.get('homeworks')
 
@@ -116,11 +103,12 @@ def parse_status(homework):
 
 def check_tokens():
     """Проверка наличия токенов."""
+    flag = True
     for name in TOKENS:
         if globals()[name] is None:
             logging.critical(TOKEN_NOT_FOUND.format(name))
-            return False
-    return True
+            flag = False
+    return flag
 
 
 def main():
@@ -128,21 +116,21 @@ def main():
     if not check_tokens():
         raise TokenError(TOKEN_ERROR)
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    current_timestamp = int(time.time())
+    timestamp = int(time.time())
     while True:
         try:
-            response = get_api_answer(current_timestamp)
+            response = get_api_answer(timestamp)
             homeworks = check_response(response)
             if homeworks:
                 send_message(bot, parse_status(homeworks[0]))
-            current_timestamp = response.get('current_date')
+            timestamp = response.get('current_date', int(time.time()))
         except Exception as error:
             message = ERROR_MESSAGE.format(error)
             logging.exception(message)
             try:
                 bot.send_message(TELEGRAM_CHAT_ID, message)
             except Exception as error:
-                raise SendMessageError(SEND_MESSAGE_ERROR.format(error))
+                logging.exception(SEND_MESSAGE_ERROR.format(error))
         time.sleep(RETRY_TIME)
 
 
